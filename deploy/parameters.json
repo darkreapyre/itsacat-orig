@@ -1,0 +1,17 @@
+{
+    "epochs": 3000,
+    "layers": 4,
+    "activations": {
+        "layer1": "relu",
+        "layer2": "relu",
+        "layer3": "relu",
+        "layer4": "sigmoid"
+    },
+    "neurons": {
+        "layer1": 20,
+        "layer2": 7,
+        "layer3": 5,
+        "layer4": 1
+    },
+    "learning_rate": 0.0075
+}

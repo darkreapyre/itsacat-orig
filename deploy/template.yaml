@@ -1,0 +1,92 @@
+Description: >
+    This template creates the necessary resources to deploy a
+    Neural Network of Lambda Functions to train an Image Classifier.
+
+Parameters:
+
+    TemplateBucket:
+        Type: String
+        Description: S3 Bucket containing CloudFormation Templates.
+        Default: ${BUCKET}
+    
+    ClusterNodeType:
+        Description: ElastiCache Node type.
+        Type: String
+        Default: cache.t2.small
+        AllowedValues:
+            - cache.t2.small
+            - cache.t2.medium
+            - cache.m4.large
+    
+    TopicEmail:
+        Default: ${EMAIL}
+        Description: E-Mail Address to send Training Status Alerts.
+        Type: String
+
+Metadata:
+
+    AWS::CloudFormation::Interface:
+        ParameterLabels:
+            TemplateBucket:
+                default: "TemplateBucket"
+            ClusterNodeType:
+                default: "ClusterNodeType"
+            TopicEmail:
+                default: "TopicEmail"
+
+        ParameterGroups:
+            - Label:
+                default: Infrastructure Configuration
+              Parameters:
+                  - ClusterNodeType
+            - Label:
+                default: Training Pipline Configuration
+              Parameters:
+                  - TemplateBucket
+                  - TopicEmail
+
+Resources:
+
+    VPC:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3.amazonaws.com/${BUCKET}/deploy/infrastructure/vpc.yaml
+            Parameters:
+                EnvironmentName:    !Ref AWS::StackName
+                VpcCIDR:            10.0.0.0/16
+                PublicSubnet1CIDR:  10.0.8.0/21
+                PublicSubnet2CIDR:  10.0.16.0/21
+                PrivateSubnet1CIDR: 10.0.24.0/21
+                PrivateSubnet2CIDR: 10.0.32.0/21
+
+    SecurityGroups:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3.amazonaws.com/${BUCKET}/deploy/infrastructure/security-groups.yaml
+            Parameters: 
+                EnvironmentName: !Ref AWS::StackName
+                VPC: !GetAtt VPC.Outputs.VPC
+    
+    Redis:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3.amazonaws.com/${BUCKET}/deploy/infrastructure/redis.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                PrivateSubnet1: !GetAtt VPC.Outputs.PrivateSubnet1
+                PrivateSubnet2: !GetAtt VPC.Outputs.PrivateSubnet2
+                VPC: !GetAtt VPC.Outputs.VPC
+                ClusterNodeType: !Ref ClusterNodeType
+    
+    TrainLambda:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://s3.amazonaws.com/${BUCKET}/deploy/lambda/train/lambda.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                TopicEmail: !Ref TopicEmail
+                S3Bucket: !Ref TemplateBucket
+                SecurityGroup: !GetAtt SecurityGroups.Outputs.HostSecurityGroup
+                PrivateSubnet1: !GetAtt VPC.Outputs.PrivateSubnet1
+                PrivateSubnet2: !GetAtt VPC.Outputs.PrivateSubnet2
+

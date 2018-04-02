@@ -1,0 +1,65 @@
+Description: >
+    This template deploys aa single instance ElastiCache using the Redis engine.
+
+Parameters:
+  ClusterNodeType:
+    Description: ElastiCache Node type
+    Type: String
+    Default: cache.t2.small
+  
+  PrivateSubnet1:
+    Description: Private Subnet 1
+    Type: AWS::EC2::Subnet::Id
+    
+  PrivateSubnet2:
+    Description: Private Subnet 2
+    Type: AWS::EC2::Subnet::Id
+    
+  VPC:
+    Description: VPC for the CLludFormation Stack
+    Type: AWS::EC2::VPC::Id
+  
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+
+Resources:
+
+    RedisClusterSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: ElastiCache Subnet Group
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+
+    RedisCluster: 
+        Type: AWS::ElastiCache::CacheCluster
+        Properties:
+            CacheNodeType: !Ref ClusterNodeType
+            Engine: redis
+            NumCacheNodes: 1
+            VpcSecurityGroupIds:
+              - !Ref RedisClusterSecurityGroup
+            CacheSubnetGroupName: !Ref RedisClusterSubnetGroup
+
+    RedisClusterSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Elasticache Security Group
+            VpcId: !Ref VPC
+            SecurityGroupIngress:
+              - IpProtocol: tcp
+                FromPort: 6379
+                ToPort: 6379
+                CidrIp: 0.0.0.0/0
+            Tags:
+              - Key: Name
+                Value: !Sub ${EnvironmentName}-Redis
+
+Outputs:
+
+    RedisSecurityGroup: 
+        Description: A reference to the security group for the Redis Security Group
+        Value: !Ref RedisClusterSecurityGroup

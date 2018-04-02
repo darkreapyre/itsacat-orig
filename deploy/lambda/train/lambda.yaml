@@ -1,0 +1,327 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This Template deploys the necessary Lambda Functions to run a Neural Network
+  for image classifiication. Additionally the Template configures the status
+  alerting SNS Topic, CloudWatch invocation Rule and the  neccessary VPC access
+  to back-end resources. 
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+  TopicEmail:
+    Default: mail@example.com
+    Description: E-Mail Address to send Training Alerts
+    Type: String
+
+  S3Bucket:
+    Default: lnn
+    Description: S3 Bucket containing training data and network configuration
+    Type: String
+
+  PrivateSubnet1:
+    Description: Private Subnet 1
+    Type: 'AWS::EC2::Subnet::Id'
+
+  PrivateSubnet2:
+    Description: Private Subnet 2
+    Type: 'AWS::EC2::Subnet::Id'
+
+  SecurityGroup:
+    Description: >-
+      The security groups IDs in the VPC that includes the resources to which
+      the Lambda function requires access.
+    Type: 'AWS::EC2::SecurityGroup::Id'
+
+Resources:
+  SNSTopic:
+    Type: 'AWS::SNS::Topic'
+    Description: Publish Errors and Neural Network Training Status
+    Properties:
+      DisplayName: Serverless Neural Network Status Message
+      Subscription:
+        - Endpoint: !Ref TopicEmail
+          Protocol: email
+      TopicName: !Sub ${EnvironmentName}-SNN-SNS
+
+  LaunchLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: LaunchLambda
+      Description: Launches Neural Network training from an S3 training data upload
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: deploy/lambda/train/package.zip
+      Handler: launch.lambda_handler
+      Role: !GetAtt 
+        - LaunchLambdaRole
+        - Arn
+      Runtime: python3.6
+      MemorySize: '192'
+      Timeout: '300'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          Region: !Ref 'AWS::Region'
+          SNSArn: !Ref SNSTopic
+    DependsOn: LaunchLambdaRole
+
+  LaunchLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess
+      Policies:
+      - PolicyName: LaunchLambda-AssumeRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource: !Ref SNSTopic
+          - Effect: Allow
+            Action:
+            - lambda:Invoke*
+            - lambda:ListVersionsByFunction
+            - lambda:ListAliases
+            - lambda:GetFunction
+            - lambda:GetFunctionConfiguration
+            - lambda:ListEventSourceMapping
+            - lambda:GetPolicy
+            - lambda:ListFunctions
+            - ec2:DescribeInstances
+            - ec2:ModifyNetworkInterfaceAttribute
+            - ec2:ResetNetworkInterfaceAttribute
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+            - ec2:DetachNetworkInterface
+            - s3:*
+            - elasticache:*
+            - dynamodb:*
+            Resource: '*'
+
+  TrainerLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: TrainerLambda
+      Description: Coordinates Forward and Backward Propogation across epochs
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: deploy/lambda/train/package.zip
+      Handler: trainer.lambda_handler
+      Role: !GetAtt 
+        - TrainerLambdaRole
+        - Arn
+      Runtime: python3.6
+      MemorySize: '192'
+      Timeout: '300'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          Region: !Ref 'AWS::Region'
+          SNSArn: !Ref SNSTopic
+    DependsOn: TrainerLambdaRole
+
+  TrainerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess
+      Policies:
+      - PolicyName: TrainerLambda-AssumeRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource: !Ref SNSTopic
+          - Effect: Allow
+            Action:
+            - lambda:Invoke*
+            - ec2:DescribeInstances
+            - ec2:ModifyNetworkInterfaceAttribute
+            - ec2:ResetNetworkInterfaceAttribute
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+            - ec2:DetachNetworkInterface
+            - s3:*
+            - elasticache:*
+            - dynamodb:*
+            Resource: '*'
+
+  NeuronLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: NeuronLambda
+      Description: Executes Forwardprop Activation or Backprop Gradient calculation
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: deploy/lambda/train/package.zip
+      Handler: neuron.lambda_handler
+      Role: !GetAtt 
+        - NeuronLambdaRole
+        - Arn
+      Runtime: python3.6
+      MemorySize: '192'
+      Timeout: '300'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          Region: !Ref 'AWS::Region'
+          SNSArn: !Ref SNSTopic
+    DependsOn: NeuronLambdaRole
+
+  NeuronLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess
+      Policies:
+      - PolicyName: NeuronLambda-AssumeRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource: !Ref SNSTopic
+          - Effect: Allow
+            Action:
+            - lambda:Invoke*
+            - ec2:DescribeInstances
+            - ec2:ModifyNetworkInterfaceAttribute
+            - ec2:ResetNetworkInterfaceAttribute
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+            - ec2:DetachNetworkInterface
+            - s3:*
+            - elasticache:*
+            - dynamodb:*
+            Resource: '*'
+  
+  S3Trigger:
+    Type: Custom::S3Trigger
+    Properties:
+      ServiceToken: !GetAtt S3TriggerLambda.Arn
+      Region: !Ref AWS::Region
+      AccountNumber: !Ref AWS::AccountId
+      Bucket: !Ref S3Bucket
+      FunctionArn: !GetAtt LaunchLambda.Arn
+
+  S3TriggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: S3TriggerLambda
+      Description: Custom Resource to configure S3 Event Trigger
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: deploy/lambda/train/package.zip
+      Handler: S3Trigger.lambda_handler
+      Role: !GetAtt 
+        - S3TriggerLambdaRole
+        - Arn
+      Runtime: python3.6
+      MemorySize: '128'
+      Timeout: '300'
+    DependsOn:
+      - S3TriggerLambdaRole
+      - LaunchLambda
+      - TrainerLambda
+
+  S3TriggerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3TriggerLambda-AssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGrouyp
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - lambda:Invoke*
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                Resource: '*'
